@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -540,20 +541,53 @@ class _SettingsBody extends StatelessWidget {
                 context,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Icons.folder_outlined,
-                        size: 20,
-                        color: context.textM,
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.folder_outlined,
+                            size: 20,
+                            color: context.textM,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Obx(
+                              () => Text(
+                                modelManager.modelsDirObs.value.isNotEmpty
+                                    ? modelManager.modelsDirObs.value
+                                    : modelManager.modelsDir,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: context.text,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          modelManager.modelsDir,
-                          style: TextStyle(fontSize: 13, color: context.text),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () =>
+                              _changeDataFolder(context, modelManager),
+                          icon: const Icon(
+                            Icons.drive_file_move_outlined,
+                            size: 18,
+                          ),
+                          label: const Text('Change Data Folder'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: context.text,
+                            side: BorderSide(color: context.border),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -735,6 +769,111 @@ class _SettingsBody extends StatelessWidget {
       ),
       child: child,
     );
+  }
+
+  Future<void> _changeDataFolder(
+    BuildContext context,
+    ModelManager modelManager,
+  ) async {
+    final picked = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Select New Data Folder',
+    );
+    if (picked == null || picked.trim().isEmpty) return;
+    if (picked.trim() == modelManager.modelsDir) return;
+
+    final confirmed = await Get.dialog<bool>(
+      AlertDialog(
+        backgroundColor: context.bgPanel,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Move Data Folder?', style: TextStyle(color: context.text)),
+        content: Text(
+          'All downloaded/imported model files will be moved from:\n\n'
+          '${modelManager.modelsDir}\n\nto:\n\n$picked\n\n'
+          'Any currently loaded local model will be unloaded first.',
+          style: TextStyle(color: context.textM, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: Text('Cancel', style: TextStyle(color: context.textD)),
+          ),
+          ElevatedButton(
+            onPressed: () => Get.back(result: true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              elevation: 0,
+            ),
+            child: const Text(
+              'Move Files',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final statusMsg = 'Preparing...'.obs;
+    final progressVal = 0.0.obs;
+
+    Get.dialog(
+      PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: context.bgPanel,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(
+            'Moving Data...',
+            style: TextStyle(color: context.text, fontSize: 16),
+          ),
+          content: Obx(
+            () => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LinearProgressIndicator(
+                  value: progressVal.value > 0 ? progressVal.value : null,
+                  backgroundColor: context.border,
+                  valueColor: const AlwaysStoppedAnimation(AppColors.accent),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  statusMsg.value,
+                  style: TextStyle(color: context.textM, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      barrierDismissible: false,
+    );
+
+    try {
+      final moved = await modelManager.changeDataDirectory(
+        picked,
+        onProgress: (msg, prog) {
+          statusMsg.value = msg;
+          progressVal.value = prog;
+        },
+      );
+      if (Get.isDialogOpen ?? false) Get.back();
+      Get.snackbar(
+        'Data Folder Updated',
+        moved > 0
+            ? 'Moved $moved file(s) to $picked'
+            : 'Data folder set to $picked',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+    } catch (e) {
+      if (Get.isDialogOpen ?? false) Get.back();
+      Get.snackbar(
+        'Move Failed',
+        e.toString(),
+        snackPosition: SnackPosition.BOTTOM,
+      );
+    }
   }
 
   Widget _statusChip(BuildContext context, String text, Color color) {

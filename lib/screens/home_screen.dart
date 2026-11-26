@@ -564,7 +564,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _showModelPicker(BuildContext context) {
     final downloaded = _modelCtrl.downloadedModels;
-    if (downloaded.isEmpty) {
+    final apiModels =
+        _modelCtrl.catalog.where((m) => m.isApiModel).toList();
+    if (downloaded.isEmpty && apiModels.isEmpty) {
       // No models — nudge user to Models tab
       setState(() => _mobileTabIndex = 1);
       return;
@@ -643,7 +645,88 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 4),
-              // Model list
+              // API models
+              ...apiModels.map((info) {
+                final isActive =
+                    _modelCtrl.selectedModelFilename.value == info.filename &&
+                    _llm.isLoaded.value;
+                final isLoading =
+                    _modelCtrl.loadingModelFilename.value == info.filename;
+                return ListTile(
+                  dense: true,
+                  leading: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: isActive
+                          ? AppColors.green.withOpacity(0.15)
+                          : isLoading
+                          ? AppColors.orange.withOpacity(0.15)
+                          : AppColors.accent.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: isLoading
+                        ? const Padding(
+                            padding: EdgeInsets.all(8),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.orange,
+                            ),
+                          )
+                        : Icon(
+                            isActive
+                                ? Icons.check_rounded
+                                : Icons.cloud_outlined,
+                            size: 16,
+                            color: isActive
+                                ? AppColors.green
+                                : AppColors.accentHi,
+                          ),
+                  ),
+                  title: Text(
+                    info.name,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                      color: context.text,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    '${info.badge} • ${info.url}',
+                    style: TextStyle(fontSize: 11, color: context.textD),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: isActive
+                      ? const Text(
+                          'Active',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.green,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      : isLoading
+                      ? const Text(
+                          'Connecting...',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.orange,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      : null,
+                  onTap: () {
+                    Navigator.pop(context);
+                    if (!isActive && !isLoading) {
+                      _modelCtrl.loadModel(info.filename);
+                    }
+                  },
+                );
+              }),
+              // Local model list
               ...downloaded.map((filename) {
                 final info = _modelCtrl.getModelInfo(filename);
                 final isActive =

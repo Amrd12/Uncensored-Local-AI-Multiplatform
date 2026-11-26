@@ -107,4 +107,12 @@ class ChatStorageService extends GetxService {
       _settingsBox.get('backend_type', defaultValue: 'cpu') as String;
 
   set backendType(String value) => _settingsBox.put('backend_type', value);
+
+  // ── Storage Settings ───────────────────────────────────────
+
+  String get customModelsDir =>
+      _settingsBox.get('custom_models_dir', defaultValue: '') as String;
+
+  set customModelsDir(String value) =>
+      _settingsBox.put('custom_models_dir', value);
 }

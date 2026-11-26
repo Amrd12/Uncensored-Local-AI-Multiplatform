@@ -8,15 +8,21 @@ import 'package:path/path.dart' as p;
 import 'wakelock_service.dart';
 import 'chat_storage_service.dart';
 import 'log_service.dart';
+import '../models/api_models/abstract_api_model.dart';
+import '../models/message_model.dart';
 
-/// Wraps llamadart's LlamaEngine for model loading, generation, and lifecycle.
+/// Wraps llamadart's LlamaEngine and remote AbstractApiModel providers for
+/// unified model loading, generation, and lifecycle.
 class LlmService extends GetxService {
   LlamaEngine? _engine;
   LlamaBackend? _backend;
+  AbstractApiModel? _activeApiModel;
 
   final isLoaded = false.obs;
+  final isApiModelLoaded = false.obs;
   final isGenerating = false.obs;
   final loadedModelPath = ''.obs;
+  final activeApiModelName = ''.obs;
   final tokensPerSecond = 0.0.obs;
   final lastGenerationTokens = 0.obs;
   final lastGenerationSpeed = 0.0.obs;
@@ -32,7 +38,67 @@ class LlmService extends GetxService {
   String get loadedModelFilename {
     final path = loadedModelPath.value;
     if (path.isEmpty) return '';
+    if (isApiModelLoaded.value) return path;
     return p.basename(path);
+  }
+
+  /// Load a remote/local API model so it behaves identically to a local GGUF model.
+  Future<void> loadApiModel(AbstractApiModel apiModel) async {
+    LogService? log;
+    try {
+      log = Get.find<LogService>();
+    } catch (_) {}
+
+    log?.info(
+      'Connecting API model: ${apiModel.name} (${apiModel.providerName} @ ${apiModel.baseUrl})',
+      source: 'API',
+    );
+
+    _loadingCancelled = false;
+    isLoadingModel.value = true;
+    loadingProgress.value = 0.2;
+    loadingStatusMsg.value = 'Connecting to ${apiModel.providerName}...';
+
+    try {
+      if (_engine != null || _activeApiModel != null || isLoaded.value) {
+        await _fullTeardown();
+      }
+
+      if (_loadingCancelled) {
+        _resetLoadingState();
+        return;
+      }
+
+      loadingProgress.value = 0.6;
+      loadingStatusMsg.value = 'Validating endpoint...';
+
+      final status = await apiModel.validateConnection();
+      if (_loadingCancelled) {
+        _resetLoadingState();
+        return;
+      }
+
+      if (status == ConnectionStatus.error ||
+          status == ConnectionStatus.disconnected) {
+        log?.info(
+          'Endpoint validation returned ${status.name} for ${apiModel.baseUrl}; proceeding with model activation',
+          source: 'API',
+        );
+      }
+
+      _activeApiModel = apiModel;
+      isApiModelLoaded.value = true;
+      isLoaded.value = true;
+      loadedModelPath.value = apiModel.id;
+      activeApiModelName.value = apiModel.name;
+      loadingProgress.value = 1.0;
+      loadingStatusMsg.value = 'Ready!';
+
+      log?.info('API model ready: ${apiModel.name}', source: 'API');
+      await Future.delayed(const Duration(milliseconds: 150));
+    } finally {
+      _resetLoadingState();
+    }
   }
 
   String get publicModelId {
@@ -266,6 +332,54 @@ class LlmService extends GetxService {
     String? systemPrompt,
     double temperature = 0.7,
   }) async* {
+    if (_activeApiModel != null && isApiModelLoaded.value) {
+      if (isGenerating.value) {
+        throw StateError('Another generation is already in progress.');
+      }
+
+      isGenerating.value = true;
+      tokensPerSecond.value = 0.0;
+      final stopwatch = Stopwatch()..start();
+      int tokenCount = 0;
+
+      try {
+        final msgModels = messages.map((m) {
+          final roleStr = m['role'] ?? 'user';
+          final role = roleStr == 'assistant'
+              ? MessageRole.assistant
+              : roleStr == 'system'
+                  ? MessageRole.system
+                  : MessageRole.user;
+          return MessageModel(role: role, content: m['content'] ?? '');
+        }).toList();
+
+        final effectivePrompt = (systemPrompt != null && systemPrompt.isNotEmpty)
+            ? systemPrompt
+            : _activeApiModel!.systemPrompt;
+
+        await for (final chunk in _activeApiModel!.sendMessages(
+          msgModels,
+          systemPrompt: effectivePrompt,
+          temperature: temperature,
+          isStreamingSupported: _activeApiModel!.isStreamingSupported,
+        )) {
+          if (!isGenerating.value) break;
+          tokenCount++;
+          if (stopwatch.elapsedMilliseconds > 0) {
+            tokensPerSecond.value =
+                tokenCount / (stopwatch.elapsedMilliseconds / 1000);
+          }
+          yield chunk;
+        }
+      } finally {
+        stopwatch.stop();
+        lastGenerationTokens.value = tokenCount;
+        lastGenerationSpeed.value = tokensPerSecond.value;
+        isGenerating.value = false;
+      }
+      return;
+    }
+
     if (_engine == null || !isLoaded.value) {
       throw StateError('No model loaded. Call loadModel() first.');
     }
@@ -349,6 +463,54 @@ class LlmService extends GetxService {
     required List<LlamaChatMessage> messages,
     GenerationParams params = const GenerationParams(),
   }) async* {
+    if (_activeApiModel != null && isApiModelLoaded.value) {
+      if (isGenerating.value) {
+        throw StateError('Another generation is already in progress.');
+      }
+
+      isGenerating.value = true;
+      tokensPerSecond.value = 0.0;
+      final stopwatch = Stopwatch()..start();
+      int tokenCount = 0;
+
+      try {
+        final msgModels = messages.map((m) {
+          final roleStr = m['role'] ?? 'user';
+          final role = roleStr == 'assistant'
+              ? MessageRole.assistant
+              : roleStr == 'system'
+                  ? MessageRole.system
+                  : MessageRole.user;
+          return MessageModel(role: role, content: m['content'] ?? '');
+        }).toList();
+
+        final effectivePrompt = (systemPrompt != null && systemPrompt.isNotEmpty)
+            ? systemPrompt
+            : _activeApiModel!.systemPrompt;
+
+        await for (final chunk in _activeApiModel!.sendMessages(
+          msgModels,
+          systemPrompt: effectivePrompt,
+          temperature: temperature,
+          isStreamingSupported: _activeApiModel!.isStreamingSupported,
+        )) {
+          if (!isGenerating.value) break;
+          tokenCount++;
+          if (stopwatch.elapsedMilliseconds > 0) {
+            tokensPerSecond.value =
+                tokenCount / (stopwatch.elapsedMilliseconds / 1000);
+          }
+          yield chunk;
+        }
+      } finally {
+        stopwatch.stop();
+        lastGenerationTokens.value = tokenCount;
+        lastGenerationSpeed.value = tokensPerSecond.value;
+        isGenerating.value = false;
+      }
+      return;
+    }
+
     if (_engine == null || !isLoaded.value) {
       throw StateError('No model loaded. Call loadModel() first.');
     }
@@ -400,11 +562,18 @@ class LlmService extends GetxService {
     _generateSub?.cancel();
     _generateSub = null;
     _engine?.cancelGeneration();
+    await _activeApiModel?.closeConnection();
     isGenerating.value = false;
   }
 
   /// Full native teardown — dispose engine AND backend to prevent stale state.
   Future<void> _fullTeardown() async {
+    if (_activeApiModel != null) {
+      try {
+        await _activeApiModel!.closeConnection();
+      } catch (_) {}
+      _activeApiModel = null;
+    }
     if (_engine != null) {
       try {
         await _engine!.dispose();
@@ -416,7 +585,9 @@ class LlmService extends GetxService {
     // Also destroy the backend — it can't be reused after engine disposal
     _backend = null;
     isLoaded.value = false;
+    isApiModelLoaded.value = false;
     loadedModelPath.value = '';
+    activeApiModelName.value = '';
     tokensPerSecond.value = 0.0;
   }
 

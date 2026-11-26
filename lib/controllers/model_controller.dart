@@ -5,6 +5,8 @@ import 'package:get/get.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../models/ai_model_info.dart';
+import '../models/api_models/abstract_api_model.dart';
+import '../models/api_models/api_model_factory.dart';
 import '../models/download_state.dart';
 import '../services/model_manager.dart';
 import '../services/llm_service.dart';
@@ -96,11 +98,11 @@ class ModelController extends GetxController {
     }
   }
 
-  /// Remove a custom model from catalog (and delete file if downloaded).
+  /// Remove a custom or API model from catalog (and delete file if downloaded).
   Future<void> deleteCustomModel(AiModelInfo model) async {
-    // Delete the file if it exists
-    await _manager.deleteModel(model.filename);
-    // Remove from catalog
+    if (!model.isApiModel) {
+      await _manager.deleteModel(model.filename);
+    }
     _manager.removeCustomModel(model.id);
     if (selectedModelFilename.value == model.filename) {
       await _llm.unloadModel();
@@ -108,7 +110,7 @@ class ModelController extends GetxController {
     }
   }
 
-  /// Load a model into the LLM engine.
+  /// Load a local GGUF model or activate an API model.
   Future<void> loadModel(String filename) async {
     // If already loading something, cancel it first
     if (isLoadingModel.value) {
@@ -124,19 +126,28 @@ class ModelController extends GetxController {
     loadError.value = '';
 
     try {
-      final path = _manager.getModelPathByFilename(filename);
-      final file = File(path);
-      
-      if (await file.exists()) {
-        final sizeGb = (await file.length()) / (1024 * 1024 * 1024);
-        final confirmed = await _confirmLargeModel(sizeGb);
-        if (!confirmed) {
-          cancelLoadModel();
-          return;
+      final info = getModelInfo(filename);
+      if (info != null && info.isApiModel) {
+        final apiModel = info.toApiModel();
+        if (apiModel == null) {
+          throw Exception('Invalid API model configuration.');
         }
-      }
+        await _llm.loadApiModel(apiModel);
+      } else {
+        final path = _manager.getModelPathByFilename(filename);
+        final file = File(path);
 
-      await _llm.loadModel(path);
+        if (await file.exists()) {
+          final sizeGb = (await file.length()) / (1024 * 1024 * 1024);
+          final confirmed = await _confirmLargeModel(sizeGb);
+          if (!confirmed) {
+            cancelLoadModel();
+            return;
+          }
+        }
+
+        await _llm.loadModel(path);
+      }
 
       // Check if loading was cancelled
       if (!_llm.isLoaded.value && loadingModelFilename.value == null) {
@@ -507,5 +518,58 @@ class ModelController extends GetxController {
     final sizeStr = sizeGb > 0 ? ' (${sizeGb} GB)' : '';
     Get.snackbar('Model Added', '$name$sizeStr added to your library!',
         snackPosition: SnackPosition.BOTTOM);
+  }
+
+  /// Add an API model (OpenAI, LM Studio, Ollama, or any compatible server).
+  Future<AiModelInfo> addApiModel({
+    required String name,
+    required ApiProviderType providerType,
+    required String baseUrl,
+    String apiKey = '',
+    required String modelId,
+    String systemPrompt = '',
+    bool autoLoad = true,
+  }) async {
+    final id = 'api_${DateTime.now().millisecondsSinceEpoch}';
+    final cleanUrl =
+        baseUrl.trim().isEmpty ? providerType.defaultBaseUrl : baseUrl.trim();
+    final displayName = name.trim().isNotEmpty ? name.trim() : modelId.trim();
+
+    final apiModel = ApiModelFactory.create(
+      id: id,
+      name: displayName,
+      providerType: providerType,
+      baseUrl: cleanUrl,
+      apiKey: apiKey.trim(),
+      modelId: modelId.trim(),
+      systemPrompt: systemPrompt.trim(),
+    );
+
+    final info = AiModelInfo(
+      id: id,
+      name: displayName,
+      filename: id,
+      url: cleanUrl,
+      sizeGb: 0,
+      minRamGb: 0,
+      label: 'API',
+      badge: providerType.badgeLabel,
+      systemPrompt: systemPrompt.trim(),
+      apiConfig: apiModel.toJson(),
+    );
+
+    _manager.addCustomModel(info);
+
+    Get.snackbar(
+      'API Model Added',
+      '$displayName (${providerType.displayName}) added to your library!',
+      snackPosition: SnackPosition.BOTTOM,
+    );
+
+    if (autoLoad) {
+      await loadModel(info.filename);
+    }
+
+    return info;
   }
 }

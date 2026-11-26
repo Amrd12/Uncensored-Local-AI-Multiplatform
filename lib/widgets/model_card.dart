@@ -93,41 +93,86 @@ class ModelCard extends StatelessWidget {
 
             const SizedBox(height: 6),
 
-            // ── Size and RAM ──────────────────────────────────────
-            Wrap(
-              spacing: 12,
-              runSpacing: 6,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.storage_rounded, size: 14, color: context.textD),
-                    const SizedBox(width: 4),
-                    Text('${model.sizeGb} GB',
-                        style: TextStyle(fontSize: 12, color: context.textM)),
-                  ],
-                ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.memory_rounded, size: 14, color: context.textD),
-                    const SizedBox(width: 4),
-                    Text('Min ${model.minRamGb} GB RAM',
-                        style: TextStyle(fontSize: 12, color: context.textM)),
-                  ],
-                ),
-                if (isDownloaded && !isCurrentlyDownloading)
+            // ── Size and RAM (or API endpoint info) ───────────────
+            if (model.isApiModel)
+              Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.cloud_outlined, size: 14, color: context.textD),
+                      const SizedBox(width: 4),
+                      Text(
+                        model.apiConfig?['modelId']?.toString() ?? model.name,
+                        style: TextStyle(fontSize: 12, color: context.textM),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.link_rounded, size: 14, color: context.textD),
+                      const SizedBox(width: 4),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 220),
+                        child: Text(
+                          model.url,
+                          style: TextStyle(fontSize: 12, color: context.textM),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                   const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.check_circle_rounded, size: 14, color: AppColors.green),
+                      Icon(Icons.bolt_rounded, size: 14, color: AppColors.green),
                       SizedBox(width: 4),
-                      Text('Downloaded',
-                          style: TextStyle(fontSize: 12, color: AppColors.green)),
+                      Text(
+                        'Remote API',
+                        style: TextStyle(fontSize: 12, color: AppColors.green),
+                      ),
                     ],
                   ),
-              ],
-            ),
+                ],
+              )
+            else
+              Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.storage_rounded, size: 14, color: context.textD),
+                      const SizedBox(width: 4),
+                      Text('${model.sizeGb} GB',
+                          style: TextStyle(fontSize: 12, color: context.textM)),
+                    ],
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.memory_rounded, size: 14, color: context.textD),
+                      const SizedBox(width: 4),
+                      Text('Min ${model.minRamGb} GB RAM',
+                          style: TextStyle(fontSize: 12, color: context.textM)),
+                    ],
+                  ),
+                  if (isDownloaded && !isCurrentlyDownloading)
+                    const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.check_circle_rounded, size: 14, color: AppColors.green),
+                        SizedBox(width: 4),
+                        Text('Downloaded',
+                            style: TextStyle(fontSize: 12, color: AppColors.green)),
+                      ],
+                    ),
+                ],
+              ),
 
             const SizedBox(height: 16),
 
@@ -298,8 +343,7 @@ class ModelCard extends StatelessWidget {
   }
 
   Widget _buildActions(BuildContext context) {
-    // If it's a custom model, we show the red remove icon.
-    // We use it instead of the regular 'delete file' if it's downloaded.
+    // If it's a custom or API model, we show the red remove icon.
     final Widget removeIcon = IconButton(
       onPressed: onRemoveCustom,
       icon: const Icon(Icons.remove_circle_outline, size: 20),
@@ -307,9 +351,11 @@ class ModelCard extends StatelessWidget {
       tooltip: 'Remove from library',
     );
 
+    final bool isReady = isDownloaded || model.isApiModel;
+
     return Row(
       children: [
-        if (!isDownloaded) ...[
+        if (!isReady) ...[
           Expanded(
             child: ElevatedButton.icon(
               onPressed: onDownload,
@@ -329,12 +375,15 @@ class ModelCard extends StatelessWidget {
           ],
         ],
 
-        if (isDownloaded && !isLoaded) ...[
+        if (isReady && !isLoaded) ...[
           Expanded(
             child: ElevatedButton.icon(
               onPressed: onLoad,
-              icon: const Icon(Icons.play_arrow_rounded, size: 18),
-              label: const Text('Load Model'),
+              icon: Icon(
+                model.isApiModel ? Icons.bolt_rounded : Icons.play_arrow_rounded,
+                size: 18,
+              ),
+              label: Text(model.isApiModel ? 'Connect Model' : 'Load Model'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.green,
                 foregroundColor: Colors.white,
@@ -344,7 +393,7 @@ class ModelCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          if (model.isCustom && onRemoveCustom != null)
+          if ((model.isCustom || model.isApiModel) && onRemoveCustom != null)
             removeIcon
           else
             IconButton(
@@ -355,7 +404,7 @@ class ModelCard extends StatelessWidget {
             ),
         ],
 
-        if (isDownloaded && isLoaded) ...[
+        if (isReady && isLoaded) ...[
           Expanded(
             child: OutlinedButton.icon(
               onPressed: null,
@@ -371,7 +420,9 @@ class ModelCard extends StatelessWidget {
           // Unload button
           if (onUnload != null)
             Tooltip(
-              message: 'Unload model from memory',
+              message: model.isApiModel
+                  ? 'Disconnect API model'
+                  : 'Unload model from memory',
               child: Material(
                 color: AppColors.orange.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(8),
@@ -385,7 +436,7 @@ class ModelCard extends StatelessWidget {
                 ),
               ),
             ),
-          if (model.isCustom && onRemoveCustom != null) ...[
+          if ((model.isCustom || model.isApiModel) && onRemoveCustom != null) ...[
             const SizedBox(width: 8),
             removeIcon,
           ],

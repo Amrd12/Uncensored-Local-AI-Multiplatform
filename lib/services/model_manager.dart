@@ -10,6 +10,8 @@ import 'package:path/path.dart' as p;
 
 import '../models/ai_model_info.dart';
 import '../models/download_state.dart';
+import 'chat_storage_service.dart';
+import 'llm_service.dart';
 import 'wakelock_service.dart';
 
 /// Manages model catalog, downloads, and local file discovery.
@@ -23,9 +25,11 @@ class ModelManager extends GetxService {
 
   http.Client? _httpClient;
   late String _modelsDir;
+  final modelsDirObs = ''.obs;
 
   Future<ModelManager> init() async {
     _modelsDir = await _getModelsDir();
+    modelsDirObs.value = _modelsDir;
     await _loadCatalog();
     await scanDownloaded();
     return this;
@@ -33,7 +37,16 @@ class ModelManager extends GetxService {
 
   /// Resolve models directory.
   Future<String> _getModelsDir() async {
-    // Only check USB path on desktop platforms
+    // 1. User-configured custom data folder
+    try {
+      final customDir = Get.find<ChatStorageService>().customModelsDir.trim();
+      if (customDir.isNotEmpty) {
+        await Directory(customDir).create(recursive: true);
+        return customDir;
+      }
+    } catch (_) {}
+
+    // 2. Only check USB path on desktop platforms
     if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
       try {
         final execDir = Platform.resolvedExecutable;
@@ -385,14 +398,106 @@ class ModelManager extends GetxService {
     _persistCustomModels();
   }
 
-  /// Save all custom models to Hive.
+  /// Save all custom and API models to Hive.
   void _persistCustomModels() {
     final box = Hive.box('models_meta');
     final customList = catalog
-        .where((m) => m.isCustom)
+        .where((m) => m.isCustom || m.isApiModel)
         .map((m) => m.toJson())
         .toList();
     box.put('custom_models', customList);
+  }
+
+  /// Change the data/models folder and move all existing files to [newDirPath].
+  Future<int> changeDataDirectory(
+    String newDirPath, {
+    void Function(String status, double progress)? onProgress,
+  }) async {
+    final normalizedNew = p.normalize(newDirPath.trim());
+    final normalizedOld = p.normalize(_modelsDir);
+
+    if (normalizedNew.isEmpty || normalizedNew == normalizedOld) {
+      return 0;
+    }
+
+    if (activeDownloads.isNotEmpty) {
+      throw Exception(
+        'Cannot change data folder while downloads are in progress.',
+      );
+    }
+
+    // Unload local GGUF model if active so file handles are released (Windows)
+    try {
+      final llm = Get.find<LlmService>();
+      if (llm.isLoaded.value && !llm.isApiModelLoaded.value) {
+        onProgress?.call('Unloading active model...', 0.0);
+        await llm.unloadModel();
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+    } catch (_) {}
+
+    final destDir = Directory(normalizedNew);
+    await destDir.create(recursive: true);
+
+    final oldDir = Directory(normalizedOld);
+    int movedCount = 0;
+
+    if (await oldDir.exists()) {
+      final entities = await oldDir.list().toList();
+      final files = entities.whereType<File>().toList();
+      final totalFiles = files.length;
+
+      int totalBytes = 0;
+      for (final f in files) {
+        totalBytes += await f.length();
+      }
+      int copiedBytesTotal = 0;
+
+      for (int i = 0; i < files.length; i++) {
+        final srcFile = files[i];
+        final name = p.basename(srcFile.path);
+        final destPath = p.join(normalizedNew, name);
+        final fileLen = await srcFile.length();
+
+        onProgress?.call(
+          'Moving $name (${i + 1}/$totalFiles)...',
+          totalBytes > 0 ? copiedBytesTotal / totalBytes : (i / totalFiles),
+        );
+
+        try {
+          await srcFile.rename(destPath);
+          copiedBytesTotal += fileLen;
+        } catch (_) {
+          // Cross-partition/drive move: stream copy then delete
+          final destFile = File(destPath);
+          final sink = destFile.openWrite();
+          try {
+            await for (final chunk in srcFile.openRead()) {
+              sink.add(chunk);
+              copiedBytesTotal += chunk.length;
+              if (totalBytes > 0) {
+                onProgress?.call(
+                  'Moving $name (${i + 1}/$totalFiles)...',
+                  (copiedBytesTotal / totalBytes).clamp(0.0, 1.0),
+                );
+              }
+            }
+          } finally {
+            await sink.flush();
+            await sink.close();
+          }
+          await srcFile.delete();
+        }
+        movedCount++;
+      }
+    }
+
+    _modelsDir = normalizedNew;
+    modelsDirObs.value = normalizedNew;
+    Get.find<ChatStorageService>().customModelsDir = normalizedNew;
+    await scanDownloaded();
+    onProgress?.call('Done!', 1.0);
+    return movedCount;
   }
 
   @override

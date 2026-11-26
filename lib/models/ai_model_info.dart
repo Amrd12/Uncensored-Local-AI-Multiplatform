@@ -1,3 +1,6 @@
+import 'api_models/abstract_api_model.dart';
+import 'api_models/api_model_factory.dart';
+
 /// Represents a downloadable/loadable AI model from the catalog.
 class AiModelInfo {
   final String id;
@@ -6,10 +9,11 @@ class AiModelInfo {
   final String url;
   final double sizeGb;
   final int minRamGb;
-  final String label;        // UNCENSORED / STANDARD / CUSTOM
-  final String badge;        // RECOMMENDED, HERETIC, etc.
+  final String label;        // UNCENSORED / STANDARD / CUSTOM / API
+  final String badge;        // RECOMMENDED, HERETIC, OPENAI, LM STUDIO, etc.
   final String systemPrompt;
   final bool recommended;
+  final Map<String, dynamic>? apiConfig;
 
   const AiModelInfo({
     required this.id,
@@ -22,9 +26,11 @@ class AiModelInfo {
     required this.badge,
     required this.systemPrompt,
     this.recommended = false,
+    this.apiConfig,
   });
 
   factory AiModelInfo.fromJson(Map<String, dynamic> json) {
+    final rawApi = json['apiConfig'];
     return AiModelInfo(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -36,6 +42,7 @@ class AiModelInfo {
       badge: json['badge'] as String? ?? '',
       systemPrompt: json['systemPrompt'] as String? ?? '',
       recommended: json['recommended'] as bool? ?? false,
+      apiConfig: rawApi is Map ? Map<String, dynamic>.from(rawApi) : null,
     );
   }
 
@@ -50,9 +57,16 @@ class AiModelInfo {
         'badge': badge,
         'systemPrompt': systemPrompt,
         'recommended': recommended,
+        if (apiConfig != null) 'apiConfig': apiConfig,
       };
 
   bool get isUncensored => label == 'UNCENSORED';
   bool get isStandard => label == 'STANDARD';
   bool get isCustom => label == 'CUSTOM';
+  bool get isApiModel => label == 'API' || apiConfig != null;
+
+  AbstractApiModel? toApiModel() {
+    if (apiConfig == null) return null;
+    return ApiModelFactory.fromJson(apiConfig!);
+  }
 }

@@ -6,6 +6,7 @@ import '../theme/app_colors.dart';
 import '../controllers/model_controller.dart';
 import '../services/model_manager.dart';
 import '../models/ai_model_info.dart';
+import '../widgets/import_api_dialog.dart';
 import '../widgets/model_card.dart';
 
 class ModelLibraryScreen extends StatelessWidget {
@@ -24,7 +25,7 @@ class ModelLibraryScreen extends StatelessWidget {
   }
 }
 
-enum _Filter { all, downloaded, uncensored, custom }
+enum _Filter { all, downloaded, uncensored, custom, api }
 
 class _ModelLibraryBody extends StatefulWidget {
   final bool showBackButton;
@@ -94,6 +95,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               _chip(context, 'Downloaded', _Filter.downloaded),
               _chip(context, 'Uncensored', _Filter.uncensored),
               _chip(context, 'Custom', _Filter.custom),
+              _chip(context, 'API', _Filter.api),
             ],
           ),
         ),
@@ -120,6 +122,9 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 break;
               case _Filter.custom:
                 filtered = allCatalog.where((m) => m.isCustom).toList();
+                break;
+              case _Filter.api:
+                filtered = allCatalog.where((m) => m.isApiModel).toList();
                 break;
               case _Filter.all:
               default:
@@ -504,6 +509,17 @@ class _ImportButton extends StatelessWidget {
                 onTap: () {
                   Navigator.pop(context);
                   _showAddUrlDialog(context);
+                },
+              ),
+              _importTile(
+                context,
+                icon: Icons.cloud_queue_rounded,
+                color: AppColors.accent,
+                title: 'Import from API',
+                subtitle: 'Connect OpenAI, LM Studio, Ollama, or any server',
+                onTap: () {
+                  Navigator.pop(context);
+                  Get.dialog(ImportApiDialog(ctrl: ctrl));
                 },
               ),
               const SizedBox(height: 8),
