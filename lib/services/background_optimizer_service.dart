@@ -1,12 +1,14 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hive/hive.dart';
-import 'package:disable_battery_optimization/disable_battery_optimization.dart';
 
 /// Checks and prompts the user to disable battery optimization on Android.
 /// This is critical on Samsung and other aggressive OEMs that kill background apps.
 class BackgroundOptimizerService {
   static const _promptedKey = 'battery_opt_prompted';
+  static const _channel =
+      MethodChannel('com.portableai.portable_ai_flutter/battery_optimization');
 
   /// Check and prompt the user if battery optimization is still enabled.
   /// Shows a dialog explaining why it's needed, then opens system settings.
@@ -19,10 +21,9 @@ class BackgroundOptimizerService {
       final box = Hive.box('settings');
 
       // Check if battery optimization is already disabled for our app
-      final isDisabled =
-          await DisableBatteryOptimization.isBatteryOptimizationDisabled;
+      final isDisabled = await isOptimizationDisabled();
 
-      if (isDisabled == true) return; // Already good
+      if (isDisabled) return; // Already good
 
       // Check if we've already prompted the user
       final alreadyPrompted = box.get(_promptedKey, defaultValue: false) as bool;
@@ -94,8 +95,7 @@ class BackgroundOptimizerService {
       );
 
       if (shouldOpen == true) {
-        await DisableBatteryOptimization
-            .showDisableBatteryOptimizationSettings();
+        await openBatterySettings();
       }
     } catch (e) {
       debugPrint('BackgroundOptimizerService error: $e');
@@ -107,8 +107,7 @@ class BackgroundOptimizerService {
   static Future<void> openBatterySettings() async {
     if (!Platform.isAndroid) return;
     try {
-      await DisableBatteryOptimization
-          .showDisableBatteryOptimizationSettings();
+      await _channel.invokeMethod<bool>('openBatteryOptimizationSettings');
     } catch (e) {
       debugPrint('BackgroundOptimizerService.openBatterySettings error: $e');
     }
@@ -118,8 +117,7 @@ class BackgroundOptimizerService {
   static Future<bool> isOptimizationDisabled() async {
     if (!Platform.isAndroid) return true;
     try {
-      return await DisableBatteryOptimization
-              .isBatteryOptimizationDisabled ??
+      return await _channel.invokeMethod<bool>('isBatteryOptimizationDisabled') ??
           false;
     } catch (_) {
       return false;
