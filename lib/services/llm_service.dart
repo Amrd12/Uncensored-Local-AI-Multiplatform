@@ -463,54 +463,6 @@ class LlmService extends GetxService {
     required List<LlamaChatMessage> messages,
     GenerationParams params = const GenerationParams(),
   }) async* {
-    if (_activeApiModel != null && isApiModelLoaded.value) {
-      if (isGenerating.value) {
-        throw StateError('Another generation is already in progress.');
-      }
-
-      isGenerating.value = true;
-      tokensPerSecond.value = 0.0;
-      final stopwatch = Stopwatch()..start();
-      int tokenCount = 0;
-
-      try {
-        final msgModels = messages.map((m) {
-          final roleStr = m['role'] ?? 'user';
-          final role = roleStr == 'assistant'
-              ? MessageRole.assistant
-              : roleStr == 'system'
-                  ? MessageRole.system
-                  : MessageRole.user;
-          return MessageModel(role: role, content: m['content'] ?? '');
-        }).toList();
-
-        final effectivePrompt = (systemPrompt != null && systemPrompt.isNotEmpty)
-            ? systemPrompt
-            : _activeApiModel!.systemPrompt;
-
-        await for (final chunk in _activeApiModel!.sendMessages(
-          msgModels,
-          systemPrompt: effectivePrompt,
-          temperature: temperature,
-          isStreamingSupported: _activeApiModel!.isStreamingSupported,
-        )) {
-          if (!isGenerating.value) break;
-          tokenCount++;
-          if (stopwatch.elapsedMilliseconds > 0) {
-            tokensPerSecond.value =
-                tokenCount / (stopwatch.elapsedMilliseconds / 1000);
-          }
-          yield chunk;
-        }
-      } finally {
-        stopwatch.stop();
-        lastGenerationTokens.value = tokenCount;
-        lastGenerationSpeed.value = tokensPerSecond.value;
-        isGenerating.value = false;
-      }
-      return;
-    }
-
     if (_engine == null || !isLoaded.value) {
       throw StateError('No model loaded. Call loadModel() first.');
     }
